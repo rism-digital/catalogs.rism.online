@@ -7,16 +7,16 @@ on:
   workflow_dispatch:
     inputs:
       catalog:
-        description: "Catalog to build"
+        description: Catalog to build
         required: true
-        default: "all"
+        default: all
         type: choice
         options:
           - all
           - AndP
           - BacCh
       deploy:
-        description: "Deploy to GitHub Pages (only used when catalog=all)"
+        description: Deploy to GitHub Pages (used only with catalog=all)
         required: true
         default: false
         type: boolean
@@ -32,6 +32,11 @@ concurrency:
 
 env:
   RUBY_VERSION: "3.2"
+  CATALOGS_JSON: >
+    [
+      { "repo": "rism-digital/rism-catalog-andp",  "target": "AndP"  },
+      { "repo": "rism-digital/rism-catalog-bacch", "target": "BacCh" }
+    ]
 
 jobs:
   prepare:
@@ -39,27 +44,26 @@ jobs:
     outputs:
       matrix: ${{ steps.set-matrix.outputs.matrix }}
       should_deploy: ${{ steps.set-matrix.outputs.should_deploy }}
+
     steps:
-      - name: Build selected catalog matrix
+      - name: Set matrix from env
         id: set-matrix
         shell: bash
+        env:
+          CATALOGS_JSON: ${{ env.CATALOGS_JSON }}
         run: |
-          cat > catalogs.json <<'JSON'
-          [
-            { "repo": "rism-digital/rism-catalog-andp",  "target": "AndP"  },
-            { "repo": "rism-digital/rism-catalog-bacch", "target": "BacCh" }
-          ]
-          JSON
+          FULL_MATRIX="$CATALOGS_JSON"
 
           if [ "${{ github.event_name }}" = "push" ]; then
-            MATRIX="$(cat catalogs.json)"
+            MATRIX="$FULL_MATRIX"
             SHOULD_DEPLOY="true"
           else
             SELECTED='${{ inputs.catalog }}'
+
             if [ "$SELECTED" = "all" ]; then
-              MATRIX="$(cat catalogs.json)"
+              MATRIX="$FULL_MATRIX"
             else
-              MATRIX="$(jq --arg selected "$SELECTED" '[ .[] | select(.target == $selected) ]' catalogs.json)"
+              MATRIX="$(echo "$FULL_MATRIX" | jq --arg selected "$SELECTED" '[ .[] | select(.target == $selected) ]')"
             fi
 
             if [ "${{ inputs.deploy }}" = "true" ] && [ "$SELECTED" = "all" ]; then
@@ -67,6 +71,11 @@ jobs:
             else
               SHOULD_DEPLOY="false"
             fi
+          fi
+
+          if [ "$MATRIX" = "[]" ]; then
+            echo "No catalog matched selection."
+            exit 1
           fi
 
           echo "matrix=$MATRIX" >> "$GITHUB_OUTPUT"
@@ -86,13 +95,14 @@ jobs:
         with:
           repository: ${{ matrix.catalog.repo }}
           path: source
-          # For private repos, add:
+          # Uncomment for private repos:
           # token: ${{ secrets.CATALOGS_READ_TOKEN }}
 
       - name: Setup Ruby
         uses: ruby/setup-ruby@4a9ddd6f338a97768b8006bf671dfbad383215f4
         with:
           ruby-version: ${{ env.RUBY_VERSION }}
+          bundler-cache: false
 
       - name: Install gems
         working-directory: source
@@ -101,16 +111,18 @@ jobs:
           bundle config set path vendor/bundle
           bundle install --jobs 4 --retry 3
 
+      - name: Setup Pages
+        id: pages
+        uses: actions/configure-pages@v5
+
       - name: Index
         working-directory: source
-        shell: bash
         run: bundle exec jekyll load-data
         env:
           JEKYLL_ENV: production
 
       - name: Build with Jekyll
         working-directory: source
-        shell: bash
         run: bundle exec jekyll build --baseurl "/${{ matrix.catalog.target }}"
         env:
           JEKYLL_ENV: production
