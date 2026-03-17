@@ -16,7 +16,7 @@ on:
           - AndP
           - BacCh
       deploy:
-        description: Deploy to GitHub Pages (used only with catalog=all)
+        description: Deploy to GitHub Pages
         required: true
         default: false
         type: boolean
@@ -32,62 +32,23 @@ concurrency:
 
 env:
   RUBY_VERSION: "3.2"
-  CATALOGS_JSON: >
-    [
-      { "repo": "rism-digital/rism-catalog-andp",  "target": "AndP"  },
-      { "repo": "rism-digital/rism-catalog-bacch", "target": "BacCh" }
-    ]
 
 jobs:
-  prepare:
-    runs-on: ubuntu-latest
-    outputs:
-      matrix: ${{ steps.set-matrix.outputs.matrix }}
-      should_deploy: ${{ steps.set-matrix.outputs.should_deploy }}
-
-    steps:
-      - name: Set matrix from env
-        id: set-matrix
-        shell: bash
-        env:
-          CATALOGS_JSON: ${{ env.CATALOGS_JSON }}
-        run: |
-          FULL_MATRIX="$CATALOGS_JSON"
-
-          if [ "${{ github.event_name }}" = "push" ]; then
-            MATRIX="$FULL_MATRIX"
-            SHOULD_DEPLOY="true"
-          else
-            SELECTED='${{ inputs.catalog }}'
-
-            if [ "$SELECTED" = "all" ]; then
-              MATRIX="$FULL_MATRIX"
-            else
-              MATRIX="$(echo "$FULL_MATRIX" | jq --arg selected "$SELECTED" '[ .[] | select(.target == $selected) ]')"
-            fi
-
-            if [ "${{ inputs.deploy }}" = "true" ] && [ "$SELECTED" = "all" ]; then
-              SHOULD_DEPLOY="true"
-            else
-              SHOULD_DEPLOY="false"
-            fi
-          fi
-
-          if [ "$MATRIX" = "[]" ]; then
-            echo "No catalog matched selection."
-            exit 1
-          fi
-
-          echo "matrix=$MATRIX" >> "$GITHUB_OUTPUT"
-          echo "should_deploy=$SHOULD_DEPLOY" >> "$GITHUB_OUTPUT"
-
   build:
-    needs: prepare
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        catalog: ${{ fromJson(needs.prepare.outputs.matrix) }}
+        catalog:
+          - repo: rism-digital/rism-catalog-andp
+            target: AndP
+          - repo: rism-digital/rism-catalog-bacch
+            target: BacCh
+
+    if: >
+      github.event_name == 'push' ||
+      inputs.catalog == 'all' ||
+      inputs.catalog == matrix.catalog.target
 
     steps:
       - name: Checkout catalog repository
@@ -95,7 +56,6 @@ jobs:
         with:
           repository: ${{ matrix.catalog.repo }}
           path: source
-          # Uncomment for private repos:
           # token: ${{ secrets.CATALOGS_READ_TOKEN }}
 
       - name: Setup Ruby
@@ -106,14 +66,9 @@ jobs:
 
       - name: Install gems
         working-directory: source
-        shell: bash
         run: |
           bundle config set path vendor/bundle
           bundle install --jobs 4 --retry 3
-
-      - name: Setup Pages
-        id: pages
-        uses: actions/configure-pages@v5
 
       - name: Index
         working-directory: source
@@ -128,7 +83,6 @@ jobs:
           JEKYLL_ENV: production
 
       - name: Stage output
-        shell: bash
         run: |
           mkdir -p "out/${{ matrix.catalog.target }}"
           cp -R source/_site/. "out/${{ matrix.catalog.target }}/"
@@ -141,8 +95,12 @@ jobs:
           if-no-files-found: error
 
   deploy:
-    needs: [prepare, build]
-    if: needs.prepare.outputs.should_deploy == 'true'
+    needs: build
+    if: >
+      github.event_name == 'push' ||
+      (github.event_name == 'workflow_dispatch' &&
+       inputs.catalog == 'all' &&
+       inputs.deploy == true)
     runs-on: ubuntu-latest
     environment:
       name: github-pages
@@ -155,7 +113,6 @@ jobs:
           path: site-artifacts
 
       - name: Assemble final Pages site
-        shell: bash
         run: |
           mkdir -p public
           for dir in site-artifacts/catalog-*; do
