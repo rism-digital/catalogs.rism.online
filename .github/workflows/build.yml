@@ -1,28 +1,165 @@
-  build:
+name: Build and deploy catalogs.rism.online
+
+on:
+  push:
+    branches: [main]
+
+  workflow_dispatch:
+    inputs:
+      catalog:
+        description: "Catalog to build"
+        required: true
+        default: "all"
+        type: choice
+        options:
+          - all
+          - AndP
+          - BacCh
+      deploy:
+        description: "Deploy to GitHub Pages (only used when catalog=all)"
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: catalogs-pages
+  cancel-in-progress: true
+
+env:
+  RUBY_VERSION: "3.2"
+
+jobs:
+  prepare:
     runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+      should_deploy: ${{ steps.set-matrix.outputs.should_deploy }}
     steps:
-      - name: Checkout
+      - name: Build selected catalog matrix
+        id: set-matrix
+        shell: bash
+        run: |
+          cat > catalogs.json <<'JSON'
+          [
+            { "repo": "rism-digital/rism-catalog-andp",  "target": "AndP"  },
+            { "repo": "rism-digital/rism-catalog-bacch", "target": "BacCh" }
+          ]
+          JSON
+
+          if [ "${{ github.event_name }}" = "push" ]; then
+            MATRIX="$(cat catalogs.json)"
+            SHOULD_DEPLOY="true"
+          else
+            SELECTED='${{ inputs.catalog }}'
+            if [ "$SELECTED" = "all" ]; then
+              MATRIX="$(cat catalogs.json)"
+            else
+              MATRIX="$(jq --arg selected "$SELECTED" '[ .[] | select(.target == $selected) ]' catalogs.json)"
+            fi
+
+            if [ "${{ inputs.deploy }}" = "true" ] && [ "$SELECTED" = "all" ]; then
+              SHOULD_DEPLOY="true"
+            else
+              SHOULD_DEPLOY="false"
+            fi
+          fi
+
+          echo "matrix=$MATRIX" >> "$GITHUB_OUTPUT"
+          echo "should_deploy=$SHOULD_DEPLOY" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: prepare
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        catalog: ${{ fromJson(needs.prepare.outputs.matrix) }}
+
+    steps:
+      - name: Checkout catalog repository
         uses: actions/checkout@v4
+        with:
+          repository: ${{ matrix.catalog.repo }}
+          path: source
+          # For private repos, add:
+          # token: ${{ secrets.CATALOGS_READ_TOKEN }}
+
       - name: Setup Ruby
-        # https://github.com/ruby/setup-ruby/releases/tag/v1.207.0
         uses: ruby/setup-ruby@4a9ddd6f338a97768b8006bf671dfbad383215f4
         with:
-          ruby-version: '3.2' # Not needed with a .ruby-version file
-          bundler-cache: true # runs 'bundle install' and caches installed gems automatically
-          cache-version: 0 # Increment this number if you need to re-download cached gems
-      - name: Setup Pages
-        id: pages
-        uses: actions/configure-pages@v5
+          ruby-version: ${{ env.RUBY_VERSION }}
+
+      - name: Install gems
+        working-directory: source
+        shell: bash
+        run: |
+          bundle config set path vendor/bundle
+          bundle install --jobs 4 --retry 3
+
       - name: Index
-        # Outputs to the './_site' directory by default
+        working-directory: source
+        shell: bash
         run: bundle exec jekyll load-data
         env:
           JEKYLL_ENV: production
+
       - name: Build with Jekyll
-        # Outputs to the './_site' directory by default
-        run: bundle exec jekyll build --baseurl "${{ steps.pages.outputs.base_path }}"
+        working-directory: source
+        shell: bash
+        run: bundle exec jekyll build --baseurl "/${{ matrix.catalog.target }}"
         env:
           JEKYLL_ENV: production
-      - name: Upload artifact
-        # Automatically uploads an artifact from the './_site' directory by default
+
+      - name: Stage output
+        shell: bash
+        run: |
+          mkdir -p "out/${{ matrix.catalog.target }}"
+          cp -R source/_site/. "out/${{ matrix.catalog.target }}/"
+
+      - name: Upload catalog artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: catalog-${{ matrix.catalog.target }}
+          path: out/${{ matrix.catalog.target }}
+          if-no-files-found: error
+
+  deploy:
+    needs: [prepare, build]
+    if: needs.prepare.outputs.should_deploy == 'true'
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Download all catalog artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: site-artifacts
+
+      - name: Assemble final Pages site
+        shell: bash
+        run: |
+          mkdir -p public
+          for dir in site-artifacts/catalog-*; do
+            name="$(basename "$dir" | sed 's/^catalog-//')"
+            mkdir -p "public/$name"
+            cp -R "$dir"/. "public/$name/"
+          done
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
+        with:
+          path: public
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
