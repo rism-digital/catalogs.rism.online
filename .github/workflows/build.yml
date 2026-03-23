@@ -117,8 +117,47 @@ jobs:
           path: out/${{ matrix.catalog.target }}
           if-no-files-found: error
 
+  build-main:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout main repository
+        uses: actions/checkout@v4
+        with:
+          path: source
+
+      - name: Setup Ruby
+        uses: ruby/setup-ruby@4a9ddd6f338a97768b8006bf671dfbad383215f4
+        with:
+          ruby-version: ${{ env.RUBY_VERSION }}
+          bundler-cache: false
+
+      - name: Install gems
+        working-directory: source
+        run: |
+          bundle config set path vendor/bundle
+          bundle install --jobs 4 --retry 3
+
+      - name: Index
+        working-directory: source
+        run: bundle exec jekyll load-data
+        env:
+          JEKYLL_ENV: production
+
+      - name: Build with Jekyll
+        working-directory: source
+        run: bundle exec jekyll build
+        env:
+          JEKYLL_ENV: production
+
+      - name: Upload main site artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: main-site
+          path: source/_site
+          if-no-files-found: error
+
   deploy:
-    needs: build
+    needs: [build, build-main]
     if: >
       github.event_name == 'push' ||
       (github.event_name == 'workflow_dispatch' &&
@@ -135,9 +174,18 @@ jobs:
         with:
           path: site-artifacts
 
+      - name: Download main site artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: main-site
+          path: site-artifacts/main-site
+
       - name: Assemble final Pages site
         run: |
           mkdir -p public
+          # Copy main site to root
+          cp -R site-artifacts/main-site/. public/
+          # Copy catalogs to subdirs
           for dir in site-artifacts/catalog-*; do
             name="$(basename "$dir" | sed 's/^catalog-//')"
             mkdir -p "public/$name"
