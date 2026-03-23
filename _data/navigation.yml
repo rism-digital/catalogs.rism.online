@@ -1,0 +1,6 @@
+- name:
+    en: "Home"
+    de: "Startseite"
+    fr: "Accueil"
+    it: "Home"
+  link: /index.html
