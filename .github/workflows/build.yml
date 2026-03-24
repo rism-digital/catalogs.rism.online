@@ -40,9 +40,9 @@ jobs:
       fail-fast: false
       matrix:
         catalog:
-          - repo: rism-digital/rism-catalogue-andp
+          - repo: rism-digital/rism-catalog-andp
             target: AndP
-          - repo: rism-digital/rism-catalogue-bacch
+          - repo: rism-digital/rism-catalog-bacch
             target: BacCh
 
     steps:

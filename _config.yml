@@ -18,4 +18,4 @@ lang_from_path: false
 sass:
   sourcemap: never
 
-theme: rism-catalogue-theme
+theme: rism-catalog-theme
