@@ -5,7 +5,7 @@ lang: en
 permalink: /index.html
 ---
 
-The Work catalogs in RISM Online is a series that brings together digital publications of thematic catalogs created within the RISM database.
+The *Work catalogs in RISM Online* (ISSN 3043-0410) is a series that brings together digital publications of thematic catalogs created within the RISM database.
 
 Many composers still do not have an adequate thematic catalog. This is often the case for composers from lesser-known repertoires or from less well-documented geographical areas. The establishment of this series of thematic catalogs for such composers aims to fill significant gaps and to improve the representation of diversity in resources dedicated to the history of music. One of the objectives of this series is to encourage initiatives in this direction and to support them by providing projects with the infrastructure and guidelines necessary for the creation of new thematic catalogs.
 
